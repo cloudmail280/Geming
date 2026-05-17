@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a18" />
+  <title>Geming Fighter</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <!-- TOUCH CONTROLS (muncul saat di battle) -->
+    <div id="touch" class="hidden">
+      <div class="pad-left">
+        <button class="btn dpad" data-key="left">◀</button>
+        <button class="btn dpad" data-key="right">▶</button>
+        <button class="btn dpad" data-key="up">▲</button>
+      </div>
+      <div class="pad-right">
+        <button class="btn act act-punch" data-key="punch">P</button>
+        <button class="btn act act-kick" data-key="kick">K</button>
+        <button class="btn act act-skill" data-key="skill">S</button>
+        <button class="btn act act-block" data-key="block">B</button>
+      </div>
+    </div>
+
+    <!-- TOMBOL HUD ATAS -->
+    <div id="topbar" class="hidden">
+      <button id="btn-back" class="mini">‹ Menu</button>
+    </div>
+
+    <!-- LOADING / FOOTER -->
+    <div id="hint">Geser & ketuk tombol untuk bertarung</div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
