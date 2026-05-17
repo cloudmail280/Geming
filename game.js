@@ -10,6 +10,7 @@
   const touchEl = document.getElementById('touch');
   const topbar = document.getElementById('topbar');
   const btnBack = document.getElementById('btn-back');
+  const btnMute = document.getElementById('btn-mute');
 
   const W = 960;
   const H = 540;
@@ -81,6 +82,7 @@
         world.fx.push(makeShock(s.x, s.y + s.h/2 - 4, -1, '#c08040', 22, s.idx));
         world.fx.push(makeShock(s.x, s.y + s.h/2 - 4,  1, '#c08040', 22, s.idx));
         world.shake = 14;
+        playSfx('skill');
       }
     },
     {
@@ -100,6 +102,7 @@
           x: s.x + dir*30, y: s.y - 4, vx: dir*9, vy: 0,
           r: 16, life: 80, dmg: 16, owner: s.idx, type: 'fire', tint: '#ff6a2e'
         });
+        playSfx('fireball');
       }
     },
     {
@@ -118,6 +121,7 @@
         s.invuln = 18;
         s.dashHits = 0; s.dashMaxHits = 2;
         for (let i=0;i<6;i++) world.fx.push(makeSpark(s.x, s.y, '#a3ff4d'));
+        playSfx('skill');
       }
     },
     {
@@ -133,6 +137,7 @@
       skillExec: (s, o, world) => {
         s.state = 'skill'; s.stateTime = 50; s.vx = 0;
         s.counterActive = 50;
+        playSfx('skill');
       }
     },
     {
@@ -148,6 +153,7 @@
       skillExec: (s, o, world) => {
         s.state = 'skill'; s.stateTime = 50; s.vx = 0;
         s.flurryTimer = 0; s.flurryHits = 0;
+        playSfx('skill');
       }
     },
     {
@@ -163,12 +169,14 @@
       skillExec: (s, o, world) => {
         s.state = 'skill'; s.stateTime = 30; s.vx = 0;
         const targetX = o.x;
+        playSfx('skill');
         world.timers.push({ t: 24, fn: () => {
           world.fx.push(makeBolt(targetX, 0, GROUND_Y, '#cba8ff'));
           if (Math.abs(targetX - o.x) < 80 && !o.dead) {
             applyHit(o, s, 22, 0.5, world, true);
           }
           world.shake = 10;
+          playSfx('bolt');
         }});
       }
     }
@@ -260,6 +268,284 @@
   }
 
   // -----------------------------------------------------------
+  // AUDIO ENGINE — synthesize SFX (no asset download)
+  // -----------------------------------------------------------
+  let audioCtx = null;
+  let audioMuted = false;
+  // Init pada user gesture pertama (Safari/iOS rule)
+  function ensureAudio() {
+    if (audioCtx) return audioCtx;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audioCtx = new AC();
+    } catch (e) { return null; }
+    return audioCtx;
+  }
+  // Generic envelope tone
+  function tone(freq, dur, type, vol, freq2) {
+    if (audioMuted) return;
+    const ac = ensureAudio(); if (!ac) return;
+    const t0 = ac.currentTime;
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    if (freq2 != null) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq2), t0 + dur);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(ac.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+  }
+  // Noise burst (untuk hit, KO)
+  function noise(dur, vol, filter) {
+    if (audioMuted) return;
+    const ac = ensureAudio(); if (!ac) return;
+    const t0 = ac.currentTime;
+    const buf = ac.createBuffer(1, ac.sampleRate * dur, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random()*2-1) * (1 - i/data.length);
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    let last = src;
+    if (filter) {
+      const bp = ac.createBiquadFilter();
+      bp.type = filter.type || 'bandpass';
+      bp.frequency.value = filter.freq || 1000;
+      bp.Q.value = filter.Q || 1;
+      src.connect(bp); last = bp;
+    }
+    last.connect(g).connect(ac.destination);
+    src.start(t0); src.stop(t0 + dur);
+  }
+  // Library SFX
+  const SFX = {
+    punch:    () => { noise(0.08, 0.4, {type:'lowpass', freq:1200}); tone(140, 0.08, 'square', 0.15, 80); },
+    kick:     () => { noise(0.12, 0.45, {type:'lowpass', freq:900}); tone(110, 0.12, 'sawtooth', 0.18, 60); },
+    block:    () => { tone(800, 0.06, 'triangle', 0.18, 1200); noise(0.04, 0.15, {type:'highpass', freq:2000}); },
+    hurt:     () => { tone(400, 0.12, 'sawtooth', 0.22, 180); },
+    ko:       () => { tone(220, 0.6, 'sawtooth', 0.35, 60); noise(0.5, 0.3, {type:'lowpass', freq:600}); },
+    fireball: () => { tone(180, 0.4, 'sawtooth', 0.25, 700); noise(0.4, 0.18, {type:'bandpass', freq:1500, Q:2}); },
+    skill:    () => { tone(440, 0.25, 'square', 0.2, 880); tone(660, 0.25, 'triangle', 0.18, 1320); },
+    bolt:     () => { noise(0.25, 0.4, {type:'highpass', freq:3000}); tone(1200, 0.15, 'sawtooth', 0.2, 200); },
+    jump:     () => { tone(300, 0.12, 'sine', 0.15, 600); },
+    win:      () => { tone(523, 0.18, 'square', 0.2); setTimeout(()=>tone(659, 0.18, 'square', 0.2), 130); setTimeout(()=>tone(784, 0.32, 'square', 0.22), 260); },
+    fight:    () => { tone(880, 0.1, 'square', 0.25); setTimeout(()=>tone(660, 0.18, 'square', 0.25), 110); }
+  };
+  function playSfx(name) { if (SFX[name]) SFX[name](); }
+
+  // -----------------------------------------------------------
+  // STAGES — backdrop berbeda untuk tiap karakter
+  // -----------------------------------------------------------
+  // Tiap stage punya fungsi draw(ctx, t). Saat startBattle, kita ambil
+  // salah satu dari stage P1 atau P2 (acak), supaya yang lain tetap kelihatan.
+  const STAGES = {
+    // Kuil hutan ungu — default lama (untuk Opal & fallback)
+    mystic: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#1a0a3a'); g.addColorStop(0.6, '#3a0e5a'); g.addColorStop(1, '#601a4a');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // bulan
+      ctx.fillStyle = '#ffe6c0'; ctx.beginPath(); ctx.arc(780, 110, 38, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,230,192,0.18)'; ctx.beginPath(); ctx.arc(780, 110, 60, 0, Math.PI*2); ctx.fill();
+      // gunung
+      ctx.fillStyle = '#180325'; ctx.beginPath(); ctx.moveTo(0, GROUND_Y);
+      for (let x = 0; x <= W; x += 30) {
+        const y = GROUND_Y - 60 - Math.sin(x*0.012)*30 - Math.sin(x*0.03)*12;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, GROUND_Y); ctx.closePath(); ctx.fill();
+      // partikel sihir terbang
+      for (let i = 0; i < 12; i++) {
+        const x = (i * 87 + t*0.5) % W;
+        const y = 60 + Math.sin(t*0.02 + i) * 30 + i*8;
+        ctx.fillStyle = `rgba(220,180,255,${0.4 + Math.sin(t*0.05+i)*0.3})`;
+        ctx.fillRect(x, y, 2, 2);
+      }
+      // floor
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#1a0a30'); fg.addColorStop(1, '#05010a');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+      ctx.strokeStyle = 'rgba(180,120,255,0.25)'; ctx.lineWidth = 1;
+      for (let i = 0; i < 14; i++) {
+        const yy = GROUND_Y + Math.pow(i/14, 1.6) * (H - GROUND_Y);
+        ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
+      }
+    },
+    // Dojo karate (Boja) — sunset oranye, lantai kayu, tirai bambu
+    dojo: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#ff9d4a'); g.addColorStop(0.5, '#ff6b3d'); g.addColorStop(1, '#7a2a18');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // matahari besar
+      ctx.fillStyle = '#fff2c2';
+      ctx.beginPath(); ctx.arc(W/2, 200, 90, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,200,0.25)';
+      ctx.beginPath(); ctx.arc(W/2, 200, 130, 0, Math.PI*2); ctx.fill();
+      // siluet bangunan dojo
+      ctx.fillStyle = '#1a0a08';
+      ctx.fillRect(0, GROUND_Y - 140, W, 30);
+      // pillar kolom
+      for (let i = 0; i < 8; i++) {
+        const x = i * (W/7);
+        ctx.fillRect(x - 6, GROUND_Y - 110, 12, 110);
+      }
+      // atap miring
+      ctx.beginPath();
+      ctx.moveTo(0, GROUND_Y - 140); ctx.lineTo(W/2, GROUND_Y - 200); ctx.lineTo(W, GROUND_Y - 140);
+      ctx.closePath(); ctx.fill();
+      // lantai kayu
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#6b3a18'); fg.addColorStop(1, '#2a1408');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+      for (let x = 0; x < W; x += 60) { ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, H); ctx.stroke(); }
+    },
+    // Gurun gunung (Kodam) — pasir & pegunungan tinggi
+    desert: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#d4a060'); g.addColorStop(0.6, '#a85a30'); g.addColorStop(1, '#5a2812');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // matahari pucat
+      ctx.fillStyle = '#fff5d8'; ctx.beginPath(); ctx.arc(720, 130, 45, 0, Math.PI*2); ctx.fill();
+      // pegunungan jauh
+      ctx.fillStyle = '#3a2210';
+      ctx.beginPath(); ctx.moveTo(0, GROUND_Y);
+      const peaks = [120, 220, 360, 480, 620, 780, 900];
+      for (const px of peaks) {
+        ctx.lineTo(px - 60, GROUND_Y - 40);
+        ctx.lineTo(px, GROUND_Y - 120 - (px % 40));
+        ctx.lineTo(px + 60, GROUND_Y - 40);
+      }
+      ctx.lineTo(W, GROUND_Y); ctx.closePath(); ctx.fill();
+      // batu di tanah
+      ctx.fillStyle = '#1a0c06';
+      [80, 240, 420, 590, 760, 880].forEach((bx, i) => {
+        ctx.beginPath(); ctx.ellipse(bx, GROUND_Y - 8, 22 + i*3, 8, 0, 0, Math.PI*2); ctx.fill();
+      });
+      // pasir
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#b07840'); fg.addColorStop(1, '#3a2010');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    },
+    // Hutan bambu (Natan) — hijau gelap, batang bambu
+    bamboo: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#0a2a18'); g.addColorStop(1, '#1a4a30');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // batang bambu vertikal
+      for (let i = 0; i < 14; i++) {
+        const x = (i * 75 + 30) % W;
+        const sway = Math.sin(t*0.01 + i) * 4;
+        ctx.fillStyle = i % 2 ? '#3a6a3a' : '#2a5a2a';
+        ctx.fillRect(x + sway, 0, 12, GROUND_Y);
+        // ruas bambu
+        ctx.fillStyle = '#1a3a1a';
+        for (let y = 30; y < GROUND_Y; y += 60) {
+          ctx.fillRect(x + sway - 1, y, 14, 3);
+        }
+      }
+      // daun-daun terbang
+      for (let i = 0; i < 8; i++) {
+        const x = (i * 130 + t*1.2) % W;
+        const y = 80 + Math.sin(t*0.03 + i) * 40 + i*15;
+        ctx.fillStyle = 'rgba(140,220,140,0.7)';
+        ctx.fillRect(x, y, 4, 2);
+      }
+      // tanah
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#2a3a1a'); fg.addColorStop(1, '#0a1a08');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    },
+    // Kuil malam (Botex) — ungu gelap dengan obor merah
+    temple: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#0a0820'); g.addColorStop(1, '#2a1a4a');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // bintang
+      for (let i = 0; i < 60; i++) {
+        const x = (i * 137) % W;
+        const y = (i * 47) % (GROUND_Y - 150);
+        ctx.fillStyle = `rgba(255,255,255,${0.3 + (i%3)*0.2})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+      // siluet kuil
+      ctx.fillStyle = '#1a1030';
+      ctx.fillRect(W/2 - 200, GROUND_Y - 180, 400, 180);
+      // atap pagoda
+      for (let lvl = 0; lvl < 3; lvl++) {
+        const y = GROUND_Y - 180 - lvl*30;
+        const w = 220 - lvl*40;
+        ctx.beginPath();
+        ctx.moveTo(W/2 - w, y); ctx.lineTo(W/2, y - 25); ctx.lineTo(W/2 + w, y);
+        ctx.closePath(); ctx.fill();
+      }
+      // obor (api flicker)
+      [W/2 - 220, W/2 + 220].forEach(fx => {
+        const flick = 0.7 + Math.sin(t*0.3 + fx) * 0.3;
+        ctx.fillStyle = `rgba(255,140,40,${flick})`;
+        ctx.beginPath(); ctx.arc(fx, GROUND_Y - 100, 18, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = `rgba(255,220,80,${flick*0.8})`;
+        ctx.beginPath(); ctx.arc(fx, GROUND_Y - 102, 10, 0, Math.PI*2); ctx.fill();
+      });
+      // lantai batu
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#2a2030'); fg.addColorStop(1, '#0a0810');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    },
+    // Ring tinju (Rudy) — neon city, ring di tengah
+    ring: (t) => {
+      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      g.addColorStop(0, '#0a0a1a'); g.addColorStop(1, '#1a0a2a');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+      // gedung neon
+      const buildings = [
+        {x: 50, w: 100, h: 240, c: '#3a1a4a'},
+        {x: 180, w: 80, h: 180, c: '#1a3a4a'},
+        {x: 280, w: 120, h: 280, c: '#4a1a3a'},
+        {x: 420, w: 70, h: 200, c: '#2a4a3a'},
+        {x: 530, w: 100, h: 260, c: '#1a2a4a'},
+        {x: 660, w: 90, h: 220, c: '#4a2a1a'},
+        {x: 780, w: 140, h: 300, c: '#3a1a4a'}
+      ];
+      for (const b of buildings) {
+        ctx.fillStyle = b.c;
+        ctx.fillRect(b.x, GROUND_Y - b.h, b.w, b.h);
+        // jendela neon
+        for (let y = GROUND_Y - b.h + 20; y < GROUND_Y - 20; y += 18) {
+          for (let x = b.x + 8; x < b.x + b.w - 8; x += 14) {
+            const lit = ((x*7 + y*3) % 5) < 2;
+            ctx.fillStyle = lit ? `rgba(255,200,80,${0.6 + Math.sin(t*0.1 + x)*0.2})` : 'rgba(0,0,0,0.5)';
+            ctx.fillRect(x, y, 6, 8);
+          }
+        }
+      }
+      // tali ring di lantai
+      const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+      fg.addColorStop(0, '#3a2820'); fg.addColorStop(1, '#1a0808');
+      ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+      // ring rope
+      ctx.strokeStyle = '#c83040'; ctx.lineWidth = 4;
+      for (let i = 0; i < 3; i++) {
+        const yy = GROUND_Y + 10 + i*20;
+        ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
+      }
+    }
+  };
+  // Map karakter → stage default
+  const CHAR_STAGE = {
+    boja:  'dojo',
+    kodam: 'desert',
+    natan: 'bamboo',
+    botex: 'temple',
+    rudy:  'ring',
+    opal:  'mystic'
+  };
+
+  // -----------------------------------------------------------
   // EFFECT HELPERS
   // -----------------------------------------------------------
   function makeShock(x, y, dir, tint, life, ownerIdx) {
@@ -295,6 +581,9 @@
   function startBattle(p1Id, p2Id) {
     const p1 = FIGHTERS[p1Id];
     const p2 = FIGHTERS[p2Id];
+    // pilih stage: P1 60% dari karakternya, 40% dari karakter P2
+    const stageOwner = Math.random() < 0.6 ? p1 : p2;
+    const stageId = CHAR_STAGE[stageOwner.id] || 'mystic';
     world = {
       fighters: [
         spawnFighter(p1, 0, 250, 1),
@@ -304,12 +593,29 @@
       round: 1, maxRounds: 3, score: [0,0],
       shake: 0, timer: 60 * 99,
       state: 'intro', stateTime: 90,
-      announce: 'GET READY', announceTime: 90,
-      ended: false
+      announce: 'RONDE 1', announceTime: 90,
+      ended: false,
+      matchOver: false,
+      stage: stageId
     };
     scene = 'battle';
     touchEl.classList.remove('hidden');
     topbar.classList.remove('hidden');
+  }
+
+  // Reset untuk ronde berikutnya tanpa hapus skor
+  function startNextRound() {
+    const [p1, p2] = world.fighters;
+    const def1 = p1.def, def2 = p2.def;
+    world.fighters = [
+      spawnFighter(def1, 0, 250, 1),
+      spawnFighter(def2, 1, 700, -1)
+    ];
+    world.projectiles = []; world.fx = []; world.timers = [];
+    world.shake = 0; world.timer = 60 * 99;
+    world.state = 'intro'; world.stateTime = 90;
+    world.round++;
+    world.announce = 'RONDE ' + world.round; world.announceTime = 90;
   }
 
   function spawnFighter(def, idx, x, facing) {
@@ -383,6 +689,7 @@
       if (f.onGround) f.state = mv ? 'walk' : 'idle';
       if (intent.up && f.onGround) {
         f.vy = -f.def.jump; f.onGround = false; f.state = 'jump';
+        playSfx('jump');
       }
       if (intent.punch) {
         f.state = 'punch'; f.stateTime = 14; f.hitDone = false; f.vx *= 0.4;
@@ -470,18 +777,21 @@
       attacker.vx = -target.facing * 7; attacker.vy = -6;
       world.fx.push(makeHitFx(attacker.x, attacker.y - 20, '#3df0d2'));
       world.shake = Math.max(world.shake, 8);
-      if (attacker.hp <= 0) attacker.dead = true;
+      playSfx('hurt');
+      if (attacker.hp <= 0) { attacker.dead = true; playSfx('ko'); }
       return;
     }
     let real = dmg;
     if (target.blocking && !ignoreBlock) {
       real = Math.ceil(dmg * 0.2);
       target.vx = attacker.facing * 2;
+      playSfx('block');
     } else {
       target.state = 'hurt'; target.stateTime = 16;
       target.vx = attacker.facing * (4 + knockback*8);
       target.vy = -3 - knockback*2;
       target.stun = 18;
+      playSfx(dmg >= 12 ? 'hurt' : (knockback >= 0.25 ? 'kick' : 'punch'));
     }
     target.hp = Math.max(0, target.hp - real);
     attacker.energy = Math.min(attacker.energyMax, attacker.energy + real * 1.2);
@@ -491,6 +801,7 @@
     if (target.hp <= 0) {
       target.dead = true; target.state = 'ko'; target.stateTime = 999;
       target.vy = -8; target.vx = attacker.facing * 4;
+      playSfx('ko');
     }
   }
 
@@ -520,14 +831,22 @@
       if (world.stateTime <= 0) {
         world.state = 'fight';
         world.announce = 'FIGHT!'; world.announceTime = 50;
+        playSfx('fight');
       }
       return;
     }
     if (world.state === 'over') {
       world.stateTime--;
       if (world.stateTime <= 0 && !world.ended) {
-        world.ended = true; scene = 'result';
-        touchEl.classList.add('hidden');
+        if (world.matchOver) {
+          // match selesai (best-of-3 dimenangkan) → ke result screen
+          world.ended = true; scene = 'result';
+          touchEl.classList.add('hidden');
+        } else {
+          // ronde berikutnya
+          startNextRound();
+          return;
+        }
       }
       [p1,p2].forEach(f => updateFighter(f, f===p1?p2:p1,
         {left:false,right:false,up:false,punch:false,kick:false,skill:false,block:false}));
@@ -550,9 +869,21 @@
       else winner = (p1.hp > p2.hp) ? 0 : (p2.hp > p1.hp ? 1 : -1);
       if (winner >= 0) world.score[winner]++;
       world.state = 'over'; world.stateTime = 110;
-      if (winner === 0) { world.announce = 'KAMU MENANG!'; resultText = `${p1.name} MENANG`; resultColor = p1.tint; }
-      else if (winner === 1) { world.announce = 'KALAH'; resultText = `${p2.name} MENANG`; resultColor = p2.tint; }
-      else { world.announce = 'SERI'; resultText = 'SERI'; resultColor = '#fff'; }
+
+      // cek apakah match sudah selesai (siapa duluan menang 2 ronde)
+      const winsToTake = 2;
+      if (world.score[0] >= winsToTake || world.score[1] >= winsToTake || world.round >= world.maxRounds) {
+        world.matchOver = true;
+        const matchWinner = world.score[0] > world.score[1] ? 0 : (world.score[1] > world.score[0] ? 1 : -1);
+        if (matchWinner === 0) { world.announce = 'KAMU MENANG!'; resultText = `${p1.name} MENANG`; resultColor = p1.tint; playSfx('win'); }
+        else if (matchWinner === 1) { world.announce = 'KALAH'; resultText = `${p2.name} MENANG`; resultColor = p2.tint; }
+        else { world.announce = 'SERI'; resultText = 'SERI'; resultColor = '#fff'; }
+      } else {
+        // ronde selesai tapi match lanjut
+        if (winner === 0) world.announce = 'RONDE MILIKMU';
+        else if (winner === 1) world.announce = 'RONDE LAWAN';
+        else world.announce = 'SERI';
+      }
       world.announceTime = 110;
     }
   }
@@ -608,29 +939,9 @@
   function clear(color) { ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); }
 
   function drawBgArena() {
-    const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-    g.addColorStop(0, '#1a0a3a'); g.addColorStop(0.6, '#3a0e5a'); g.addColorStop(1, '#601a4a');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
-    // bulan
-    ctx.fillStyle = '#ffe6c0'; ctx.beginPath(); ctx.arc(780, 110, 38, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,230,192,0.18)'; ctx.beginPath(); ctx.arc(780, 110, 60, 0, Math.PI*2); ctx.fill();
-    // gunung siluet
-    ctx.fillStyle = '#180325';
-    ctx.beginPath(); ctx.moveTo(0, GROUND_Y);
-    for (let x = 0; x <= W; x += 30) {
-      const y = GROUND_Y - 60 - Math.sin(x*0.012)*30 - Math.sin(x*0.03)*12;
-      ctx.lineTo(x, y);
-    }
-    ctx.lineTo(W, GROUND_Y); ctx.closePath(); ctx.fill();
-    // lantai
-    const fg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
-    fg.addColorStop(0, '#1a0a30'); fg.addColorStop(1, '#05010a');
-    ctx.fillStyle = fg; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-    ctx.strokeStyle = 'rgba(180,120,255,0.25)'; ctx.lineWidth = 1;
-    for (let i = 0; i < 14; i++) {
-      const yy = GROUND_Y + Math.pow(i/14, 1.6) * (H - GROUND_Y);
-      ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
-    }
+    const stageId = (world && world.stage) || 'mystic';
+    const fn = STAGES[stageId] || STAGES.mystic;
+    fn(frame);
   }
 
   // =============================================================
@@ -1242,7 +1553,20 @@
     ctx.textAlign = 'center';
     ctx.fillText(Math.ceil(world.timer / 60).toString().padStart(2,'0'), W/2, 42);
     ctx.font = '12px sans-serif';
-    ctx.fillText('Ronde ' + world.round, W/2, 64);
+    ctx.fillText('Ronde ' + world.round + '/' + world.maxRounds, W/2, 64);
+    // skor lampu (bola merah/kuning untuk ronde yang dimenangkan)
+    for (let i = 0; i < 2; i++) {
+      const won = world.score[0] > i;
+      ctx.fillStyle = won ? p1.tint : 'rgba(255,255,255,0.2)';
+      ctx.beginPath(); ctx.arc(W/2 - 40 - i*16, 78, 6, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    for (let i = 0; i < 2; i++) {
+      const won = world.score[1] > i;
+      ctx.fillStyle = won ? p2.tint : 'rgba(255,255,255,0.2)';
+      ctx.beginPath(); ctx.arc(W/2 + 40 + i*16, 78, 6, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+    }
   }
   function drawBar(x, y, w, h, frac, color, label, mirror) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, w, h);
@@ -1483,6 +1807,7 @@
     return b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
   }
   function onPointerDown(e) {
+    ensureAudio(); // unlock WebAudio on iOS/Safari
     const p = canvasPointer(e.touches ? e.touches[0] : e);
     if (scene === 'title') {
       scene = 'select';
@@ -1513,6 +1838,16 @@
     touchEl.classList.add('hidden');
     topbar.classList.add('hidden');
   });
+
+  // Mute toggle
+  function toggleMute() {
+    audioMuted = !audioMuted;
+    if (btnMute) btnMute.textContent = audioMuted ? '🔇' : '🔊';
+  }
+  if (btnMute) {
+    btnMute.addEventListener('click', e => { e.preventDefault(); ensureAudio(); toggleMute(); });
+    btnMute.addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); toggleMute(); });
+  }
 
   // -----------------------------------------------------------
   // MAIN LOOP
