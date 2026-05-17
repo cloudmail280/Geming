@@ -1,0 +1,56 @@
+{
+  "frameW": 128,
+  "frameH": 128,
+  "anchorY": 116,
+  "states": {
+    "idle": {
+      "src": "idle.png",
+      "frames": 4,
+      "fps": 6
+    },
+    "walk": {
+      "src": "walk.png",
+      "frames": 6,
+      "fps": 10
+    },
+    "jump": {
+      "src": "jump.png",
+      "frames": 2,
+      "fps": 4
+    },
+    "punch": {
+      "src": "punch.png",
+      "frames": 5,
+      "fps": 24,
+      "loop": false
+    },
+    "kick": {
+      "src": "kick.png",
+      "frames": 5,
+      "fps": 18,
+      "loop": false
+    },
+    "block": {
+      "src": "block.png",
+      "frames": 1,
+      "fps": 1
+    },
+    "hurt": {
+      "src": "hurt.png",
+      "frames": 2,
+      "fps": 8,
+      "loop": false
+    },
+    "ko": {
+      "src": "ko.png",
+      "frames": 1,
+      "fps": 1
+    },
+    "skill": {
+      "src": "skill.png",
+      "frames": 6,
+      "fps": 18,
+      "loop": false
+    }
+  }
+}
