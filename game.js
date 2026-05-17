@@ -175,6 +175,91 @@
   ];
 
   // -----------------------------------------------------------
+  // SPRITE SYSTEM — load PNG per karakter & state
+  // -----------------------------------------------------------
+  // Tiap karakter bisa punya 1+ file di sprites/<id>/<state>.png
+  // State yang dicari: idle, walk, jump, punch, kick, block, hurt, ko, skill
+  // Kalau file ada → render sprite. Kalau tidak → fallback ke vector.
+  //
+  // Spritesheet horizontal didukung: PNG bisa berisi beberapa frame berurutan
+  // ukuran sama. Sistem akan auto-detect berdasar file metadata <id>.json
+  // di sprites/<id>/manifest.json. Format manifest:
+  // {
+  //   "frameW": 128, "frameH": 128, "anchorY": 96,
+  //   "states": {
+  //     "idle":  { "src": "idle.png",  "frames": 4, "fps": 6 },
+  //     "walk":  { "src": "walk.png",  "frames": 6, "fps": 10 },
+  //     "punch": { "src": "punch.png", "frames": 5, "fps": 18, "loop": false }
+  //   }
+  // }
+  const SPRITES = {};   // SPRITES[id] = { manifest, images: { state: HTMLImageElement } }
+
+  function loadSpritesFor(def) {
+    const slot = SPRITES[def.id] = { manifest: null, images: {}, ready: false };
+    // coba ambil manifest
+    fetch(`sprites/${def.id}/manifest.json`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(manifest => {
+        if (!manifest) return;
+        slot.manifest = manifest;
+        const states = manifest.states || {};
+        let pending = 0;
+        Object.entries(states).forEach(([state, info]) => {
+          pending++;
+          const img = new Image();
+          img.onload = () => {
+            slot.images[state] = img;
+            if (--pending === 0) slot.ready = true;
+          };
+          img.onerror = () => {
+            // file hilang → biarkan, fallback ke vector untuk state ini
+            if (--pending === 0) slot.ready = true;
+          };
+          img.src = `sprites/${def.id}/${info.src}`;
+        });
+        if (pending === 0) slot.ready = true;
+      })
+      .catch(() => { /* manifest hilang → fallback ke vector */ });
+  }
+  // load semua sprite di awal
+  FIGHTERS.forEach(loadSpritesFor);
+
+  // Cek apakah sprite tersedia untuk karakter+state tertentu
+  function hasSprite(def, state) {
+    const slot = SPRITES[def.id];
+    if (!slot || !slot.manifest) return false;
+    return !!slot.images[state];
+  }
+
+  // Render sprite di posisi (0,0) lokal — context sudah di-translate & di-scale
+  // pose: { state, t (anim ticks), stateTime }
+  function drawSpriteFighter(def, pose) {
+    const slot = SPRITES[def.id];
+    const m = slot.manifest;
+    const state = pose.state;
+    const info = (m.states && m.states[state]) || m.states.idle;
+    const img = slot.images[state] || slot.images.idle;
+    if (!img) return false;
+    const fw = m.frameW, fh = m.frameH;
+    const anchorY = m.anchorY != null ? m.anchorY : fh - 8;
+    const totalFrames = info.frames || 1;
+    const fps = info.fps || 8;
+    const loop = info.loop !== false;
+    let frameIdx;
+    if (loop) {
+      frameIdx = Math.floor((pose.t * fps / 60)) % totalFrames;
+    } else {
+      // untuk attack/punch/kick — sinkronkan dengan stateTime
+      const total = (state === 'punch') ? 14 : (state === 'kick') ? 18 : 30;
+      const elapsed = total - (pose.stateTime || 0);
+      frameIdx = Math.max(0, Math.min(totalFrames - 1, Math.floor(elapsed / total * totalFrames)));
+    }
+    const sx = frameIdx * fw;
+    ctx.drawImage(img, sx, 0, fw, fh, -fw/2, -anchorY, fw, fh);
+    return true;
+  }
+
+  // -----------------------------------------------------------
   // EFFECT HELPERS
   // -----------------------------------------------------------
   function makeShock(x, y, dir, tint, life, ownerIdx) {
@@ -1044,14 +1129,45 @@
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.scale(f.facing, 1);
-    drawHumanFighter(f.def, {
+    const pose = {
       t: f.anim,
       state: f.dead ? 'ko' : f.state,
       stateTime: f.stateTime,
       onGround: f.onGround,
       counterActive: f.counterActive
-    });
-    // hurt flash
+    };
+    // bayangan tanah (selalu)
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(0, 50, 26, 5, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // coba sprite dulu, fallback ke vector
+    let used = false;
+    if (hasSprite(f.def, pose.state) || hasSprite(f.def, 'idle')) {
+      used = drawSpriteFighter(f.def, pose);
+    }
+    if (!used) {
+      drawHumanFighter(f.def, pose);
+    } else {
+      // aura efek tetap digambar di atas sprite
+      const t = f.anim;
+      if (pose.state === 'block') {
+        ctx.strokeStyle = 'rgba(80,220,255,0.85)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, 38, 0, Math.PI*2); ctx.stroke();
+      }
+      if (pose.counterActive > 0) {
+        const a = 0.4 + Math.sin(t*0.5)*0.3;
+        ctx.strokeStyle = `rgba(60,240,210,${a})`; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(0, 0, 44, 0, Math.PI*2); ctx.stroke();
+      }
+      if (pose.state === 'skill') {
+        const a = 0.5 + Math.sin(t*0.6)*0.4;
+        ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 52, 0, Math.PI*2); ctx.stroke();
+      }
+    }
+    // hurt flash (untuk kedua mode)
     if (f.state === 'hurt' && (frame % 4 < 2)) {
       ctx.fillStyle = 'rgba(255,80,80,0.35)';
       ctx.fillRect(-22, -46, 44, 92);
@@ -1167,15 +1283,19 @@
     titleAnim++;
     drawBgArena();
     // 2 sample karakter di belakang
+    const titlePose = { t: titleAnim, state: 'idle', stateTime: 0, onGround: true };
     ctx.save();
     ctx.translate(280, 380);
     ctx.scale(1.2, 1.2);
-    drawHumanFighter(FIGHTERS[1], { t: titleAnim, state: 'idle', stateTime: 0, onGround: true });
+    if (hasSprite(FIGHTERS[1], 'idle')) drawSpriteFighter(FIGHTERS[1], titlePose);
+    else drawHumanFighter(FIGHTERS[1], titlePose);
     ctx.restore();
     ctx.save();
     ctx.translate(680, 380);
     ctx.scale(-1.2, 1.2);
-    drawHumanFighter(FIGHTERS[2], { t: titleAnim+30, state: 'idle', stateTime: 0, onGround: true });
+    const titlePose2 = { t: titleAnim+30, state: 'idle', stateTime: 0, onGround: true };
+    if (hasSprite(FIGHTERS[2], 'idle')) drawSpriteFighter(FIGHTERS[2], titlePose2);
+    else drawHumanFighter(FIGHTERS[2], titlePose2);
     ctx.restore();
 
     ctx.save();
@@ -1246,17 +1366,21 @@
       ctx.lineWidth = sel ? 4 : 2;
       ctx.strokeRect(cx, cy, cw, ch);
 
-      // PORTRAIT — gambar mini fighter
+      // PORTRAIT — gambar mini fighter (sprite kalau ada, vector kalau tidak)
       ctx.save();
       ctx.translate(cx + 64, cy + 124);
       ctx.scale(0.95, 0.95);
-      // bayangan tanah kecil
-      drawHumanFighter(f, {
+      const portraitPose = {
         t: frame + i*30,
-        state: sel ? 'idle' : 'idle',
+        state: 'idle',
         stateTime: 0,
         onGround: true
-      });
+      };
+      if (hasSprite(f, 'idle')) {
+        drawSpriteFighter(f, portraitPose);
+      } else {
+        drawHumanFighter(f, portraitPose);
+      }
       ctx.restore();
 
       // info
@@ -1317,7 +1441,9 @@
       ctx.save();
       ctx.translate(W/2, 350);
       ctx.scale(2.0, 2.0);
-      drawHumanFighter(winner.def, { t: frame, state: 'idle', stateTime: 0, onGround: true });
+      const winPose = { t: frame, state: 'idle', stateTime: 0, onGround: true };
+      if (hasSprite(winner.def, 'idle')) drawSpriteFighter(winner.def, winPose);
+      else drawHumanFighter(winner.def, winPose);
       ctx.restore();
     }
     ctx.save();
