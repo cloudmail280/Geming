@@ -125,3 +125,166 @@ html, body {
 @media (orientation: portrait) {
   #hint { font-size: 9px; }
 }
+
+
+/* LOBBY OVERLAY */
+#lobby {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,15,0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 16px;
+}
+#lobby.hidden { display: none; }
+
+.lobby-card {
+  width: 100%;
+  max-width: 360px;
+  background: linear-gradient(180deg, rgba(40,20,80,0.9), rgba(15,8,30,0.95));
+  border: 1px solid rgba(180,120,255,0.4);
+  border-radius: 14px;
+  padding: 22px 20px;
+  box-shadow: 0 12px 40px rgba(120,60,255,0.35);
+  text-align: center;
+}
+.lobby-card h2 {
+  font-size: 22px;
+  margin-bottom: 8px;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+.lobby-status {
+  font-size: 13px;
+  color: rgba(255,255,255,0.7);
+  margin-bottom: 18px;
+  min-height: 18px;
+}
+.lobby-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lobby-or {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  letter-spacing: 2px;
+  margin: 4px 0;
+}
+.lobby-btn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(60,30,100,0.6);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.05s, background 0.15s;
+}
+.lobby-btn:active { transform: scale(0.97); }
+.lobby-btn.primary {
+  background: linear-gradient(180deg, #a060ff, #6030cc);
+  border-color: #c89cff;
+  box-shadow: 0 0 14px rgba(160,80,255,0.4);
+}
+.lobby-btn.small {
+  padding: 8px;
+  font-size: 13px;
+}
+.lobby-btn.ghost {
+  background: transparent;
+  border-color: rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.7);
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.lobby-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+#input-code {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.4);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  outline: none;
+}
+#input-code:focus {
+  border-color: #a060ff;
+  box-shadow: 0 0 0 3px rgba(160,80,255,0.25);
+}
+.lobby-panel { margin-top: 6px; }
+.lobby-panel.hidden { display: none; }
+.lobby-label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(255,255,255,0.5);
+  margin-bottom: 6px;
+}
+.roomcode {
+  font-size: 36px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  color: #fff;
+  background: rgba(0,0,0,0.4);
+  border: 1px dashed rgba(180,120,255,0.6);
+  border-radius: 10px;
+  padding: 14px 8px;
+  margin-bottom: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.lobby-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
+/* tombol mode online di title screen (overlay) */
+#title-buttons {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 8;
+  padding-bottom: 8%;
+}
+#title-buttons.show { display: flex; }
+.title-btn-row {
+  display: flex;
+  gap: 12px;
+  pointer-events: auto;
+}
+.title-btn {
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,0.4);
+  background: rgba(20,8,40,0.7);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+.title-btn.online {
+  background: linear-gradient(180deg, #ff5b9c, #a02060);
+  border-color: #ffb0d0;
+  box-shadow: 0 0 14px rgba(255,90,156,0.5);
+}
+.title-btn:active { transform: scale(0.96); }

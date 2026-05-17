@@ -415,27 +415,55 @@
   const p1Intent = {left:false,right:false,up:false,punch:false,kick:false,skill:false,block:false};
   const p2Intent = {left:false,right:false,up:false,punch:false,kick:false,skill:false,block:false};
   let edgePrev = {punch:false,kick:false,skill:false,up:false};
+  let peerEdgePrev = {punch:false,kick:false,skill:false,up:false};
 
-  function readPlayerIntent() {
-    p1Intent.left  = keys.left;
-    p1Intent.right = keys.right;
-    p1Intent.block = keys.block;
-    p1Intent.up    = keys.up    && !edgePrev.up;
-    p1Intent.punch = keys.punch && !edgePrev.punch;
-    p1Intent.kick  = keys.kick  && !edgePrev.kick;
-    p1Intent.skill = keys.skill && !edgePrev.skill;
+  function readLocalIntent(intent) {
+    intent.left  = keys.left;
+    intent.right = keys.right;
+    intent.block = keys.block;
+    intent.up    = keys.up    && !edgePrev.up;
+    intent.punch = keys.punch && !edgePrev.punch;
+    intent.kick  = keys.kick  && !edgePrev.kick;
+    intent.skill = keys.skill && !edgePrev.skill;
     edgePrev.up = keys.up; edgePrev.punch = keys.punch;
     edgePrev.kick = keys.kick; edgePrev.skill = keys.skill;
   }
+  function readPeerIntent(intent) {
+    const k = net.peerKeys;
+    intent.left  = k.left;
+    intent.right = k.right;
+    intent.block = k.block;
+    intent.up    = k.up    && !peerEdgePrev.up;
+    intent.punch = k.punch && !peerEdgePrev.punch;
+    intent.kick  = k.kick  && !peerEdgePrev.kick;
+    intent.skill = k.skill && !peerEdgePrev.skill;
+    peerEdgePrev.up = k.up; peerEdgePrev.punch = k.punch;
+    peerEdgePrev.kick = k.kick; peerEdgePrev.skill = k.skill;
+  }
+  function readPlayerIntent() { readLocalIntent(p1Intent); }
 
   function updateBattle() {
     const [p1, p2] = world.fighters;
+
+    // ===== CLIENT (online): cuma render dari snapshot host, kirim input ke host =====
+    if (net.online && net.role === 'client') {
+      // kirim input lokal ke host setiap frame
+      readLocalIntent(p1Intent); // re-use untuk edge detect lokal
+      net.sendInput();
+      // animasi kecil agar bayangan tetap hidup walau snapshot belum datang
+      if (world.shake > 0) world.shake = Math.max(0, world.shake - 1);
+      if (world.announceTime > 0) world.announceTime--;
+      return;
+    }
+
     if (world.state === 'intro') {
       world.stateTime--;
       if (world.stateTime <= 0) {
         world.state = 'fight';
         world.announce = 'FIGHT!'; world.announceTime = 50;
       }
+      // tetap broadcast saat intro biar client lihat countdown
+      if (net.online && net.role === 'host') net.sendSnapshot();
       return;
     }
     if (world.state === 'over') {
@@ -443,16 +471,27 @@
       if (world.stateTime <= 0 && !world.ended) {
         world.ended = true; scene = 'result';
         touchEl.classList.add('hidden');
+        if (net.online && net.role === 'host') {
+          net.send({ t: 'scene', scene: 'result', resultText, resultColor });
+        }
       }
       [p1,p2].forEach(f => updateFighter(f, f===p1?p2:p1,
         {left:false,right:false,up:false,punch:false,kick:false,skill:false,block:false}));
       stepProjectiles(); stepFx();
+      if (net.online && net.role === 'host') net.sendSnapshot();
       return;
     }
     if (world.announceTime > 0) world.announceTime--;
     if (world.timer > 0) world.timer--;
     readPlayerIntent();
-    aiThink(p2, p1, p2Intent);
+
+    // P2: AI offline, atau peer input saat online host
+    if (net.online && net.role === 'host') {
+      readPeerIntent(p2Intent);
+    } else {
+      aiThink(p2, p1, p2Intent);
+    }
+
     updateFighter(p1, p2, p1Intent);
     updateFighter(p2, p1, p2Intent);
     stepProjectiles(); stepFx(); stepTimers();
@@ -465,11 +504,20 @@
       else winner = (p1.hp > p2.hp) ? 0 : (p2.hp > p1.hp ? 1 : -1);
       if (winner >= 0) world.score[winner]++;
       world.state = 'over'; world.stateTime = 110;
-      if (winner === 0) { world.announce = 'KAMU MENANG!'; resultText = `${p1.name} MENANG`; resultColor = p1.tint; }
-      else if (winner === 1) { world.announce = 'KALAH'; resultText = `${p2.name} MENANG`; resultColor = p2.tint; }
-      else { world.announce = 'SERI'; resultText = 'SERI'; resultColor = '#fff'; }
+      if (net.online) {
+        // dari sudut host: P1 = host, P2 = client
+        if (winner === 0)      { world.announce = 'HOST MENANG'; resultText = `${p1.name} MENANG`; resultColor = p1.tint; }
+        else if (winner === 1) { world.announce = 'TAMU MENANG'; resultText = `${p2.name} MENANG`; resultColor = p2.tint; }
+        else                   { world.announce = 'SERI'; resultText = 'SERI'; resultColor = '#fff'; }
+      } else {
+        if (winner === 0)      { world.announce = 'KAMU MENANG!'; resultText = `${p1.name} MENANG`; resultColor = p1.tint; }
+        else if (winner === 1) { world.announce = 'KALAH'; resultText = `${p2.name} MENANG`; resultColor = p2.tint; }
+        else                   { world.announce = 'SERI'; resultText = 'SERI'; resultColor = '#fff'; }
+      }
       world.announceTime = 110;
     }
+
+    if (net.online && net.role === 'host') net.sendSnapshot();
   }
 
   function stepProjectiles() {
@@ -1190,21 +1238,13 @@
     ctx.fillText('6 Petarung. Skill Unik. Pertarungan Sentuh.', W/2, 170);
 
     const bx = W/2 - 130, by = 210, bw = 260, bh = 70;
-    const pulse = 0.5 + Math.sin(titleAnim*0.08)*0.5;
-    ctx.fillStyle = `rgba(160,80,255,${0.5 + pulse*0.4})`;
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.strokeRect(bx, by, bw, bh);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 28px sans-serif';
-    ctx.fillText('MULAI', W/2, by + 45);
-
+    // overlay HTML sudah jadi tombol "Lokal/Online"; biarin area canvas kosong di sini
     ctx.font = '14px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('Ketuk layar untuk memilih petarung', W/2, by + bh + 30);
+    ctx.fillText('Pilih mode di tombol bawah', W/2, by + 30);
     ctx.restore();
 
-    titleBtn = { x: bx, y: by, w: bw, h: bh };
+    titleBtn = null;
   }
 
   // -----------------------------------------------------------
@@ -1222,7 +1262,13 @@
     ctx.fillText('PILIH PETARUNG', W/2, 50);
     ctx.font = '14px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('Ketuk salah satu kartu di bawah', W/2, 74);
+    if (net.online) {
+      const youText = net.role === 'host' ? 'Kamu = HOST (kiri)' : 'Kamu = TAMU (kanan)';
+      const peerText = net.peerPick >= 0 ? `Lawan pilih: ${FIGHTERS[net.peerPick].name}` : 'Lawan sedang memilih…';
+      ctx.fillText(youText + '   •   ' + peerText, W/2, 74);
+    } else {
+      ctx.fillText('Ketuk salah satu kartu di bawah', W/2, 74);
+    }
 
     charBoxes = [];
     const cols = 3;
@@ -1285,7 +1331,17 @@
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 17px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('PILIH ' + FIGHTERS[selectIdx].name.toUpperCase(), W/2, by + 26);
+    let label;
+    if (net.online && net.localPick >= 0 && net.peerPick < 0) {
+      label = 'MENUNGGU LAWAN…';
+    } else if (net.online && net.localPick >= 0 && net.peerPick >= 0) {
+      label = 'SIAP! MEMULAI…';
+    } else if (net.online) {
+      label = 'PILIH ' + FIGHTERS[selectIdx].name.toUpperCase();
+    } else {
+      label = 'PILIH ' + FIGHTERS[selectIdx].name.toUpperCase();
+    }
+    ctx.fillText(label, W/2, by + 26);
     ctx.restore();
 
     selectStartBtn = { x: bx, y: by, w: bw, h: bh };
@@ -1338,7 +1394,8 @@
     ctx.strokeRect(bx, by, bw, bh);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('BERTARUNG LAGI', W/2, by + 32);
+    const rlabel = (net.online && net.role === 'client') ? 'MENUNGGU HOST…' : 'BERTARUNG LAGI';
+    ctx.fillText(rlabel, W/2, by + 32);
     resultBtn = { x: bx, y: by, w: bw, h: bh };
     ctx.restore();
   }
@@ -1359,40 +1416,353 @@
   function onPointerDown(e) {
     const p = canvasPointer(e.touches ? e.touches[0] : e);
     if (scene === 'title') {
-      scene = 'select';
+      // tombol Local/Online di overlay HTML — abaikan klik canvas
+      return;
     } else if (scene === 'select') {
       const c = charBoxes.find(b => inBox(p, b));
       if (c) selectIdx = c.idx;
       if (inBox(p, selectStartBtn)) {
+        if (net.online && net.localPick >= 0) return; // sudah pilih, tunggu peer
         p1Pick = selectIdx;
-        let pool = FIGHTERS.map((_,i)=>i).filter(i => i !== p1Pick);
-        p2Pick = pool[Math.floor(Math.random()*pool.length)];
-        startBattle(p1Pick, p2Pick);
+        if (net.online) {
+          net.localPick = p1Pick;
+          net.send({ t: 'pick', pick: p1Pick });
+          tryStartOnlineBattle();
+        } else {
+          let pool = FIGHTERS.map((_,i)=>i).filter(i => i !== p1Pick);
+          p2Pick = pool[Math.floor(Math.random()*pool.length)];
+          startBattle(p1Pick, p2Pick);
+        }
       }
     } else if (scene === 'result') {
-      if (inBox(p, resultBtn)) scene = 'select';
+      if (inBox(p, resultBtn)) {
+        if (net.online) {
+          if (net.role === 'host') {
+            net.localPick = -1; net.peerPick = -1;
+            net.send({ t: 'rematch' });
+            scene = 'select';
+            touchEl.classList.add('hidden');
+            topbar.classList.add('hidden');
+          }
+          // client tunggu pesan rematch dari host
+        } else {
+          scene = 'select';
+        }
+      }
     }
   }
   canvas.addEventListener('mousedown', onPointerDown);
   canvas.addEventListener('touchstart', e => { e.preventDefault(); onPointerDown(e); }, {passive:false});
 
   btnBack.addEventListener('click', () => {
-    scene = 'select';
+    if (net.online) net.leave();
+    scene = 'title';
+    showTitleButtons(true);
     touchEl.classList.add('hidden');
     topbar.classList.add('hidden');
   });
   btnBack.addEventListener('touchstart', e => {
     e.preventDefault();
-    scene = 'select';
+    if (net.online) net.leave();
+    scene = 'title';
+    showTitleButtons(true);
     touchEl.classList.add('hidden');
     topbar.classList.add('hidden');
   });
+
+  // -----------------------------------------------------------
+  // NETWORKING (Online vs Friend) — PeerJS / WebRTC
+  // -----------------------------------------------------------
+  const net = {
+    online: false,
+    role: null,
+    peer: null,
+    conn: null,
+    roomCode: null,
+    localPick: -1,
+    peerPick: -1,
+    peerKeys: { left:false, right:false, up:false, punch:false, kick:false, skill:false, block:false },
+    snapshot: null,
+    leave() {
+      try { if (this.conn) this.conn.close(); } catch(e){}
+      try { if (this.peer) this.peer.destroy(); } catch(e){}
+      this.online = false;
+      this.role = null; this.conn = null; this.peer = null;
+      this.roomCode = null; this.snapshot = null;
+      this.localPick = -1; this.peerPick = -1;
+      Object.keys(this.peerKeys).forEach(k => this.peerKeys[k] = false);
+    },
+    send(obj) { try { if (this.conn && this.conn.open) this.conn.send(obj); } catch(e){} },
+    sendInput() { this.send({ t: 'input', k: keys }); },
+    sendSnapshot() {
+      const w = world;
+      if (!w) return;
+      if ((frame & 1) !== 0) return; // ~30Hz
+      const fighters = w.fighters.map(s => ({
+        idx: s.idx, defId: s.def.id,
+        x: s.x, y: s.y, vx: s.vx, vy: s.vy,
+        facing: s.facing, state: s.state, stateTime: s.stateTime,
+        hp: s.hp, energy: s.energy,
+        stun: s.stun, invuln: s.invuln, blocking: s.blocking,
+        counterActive: s.counterActive, dead: s.dead, anim: s.anim, onGround: s.onGround
+      }));
+      const projectiles = w.projectiles.map(p => ({
+        x:p.x, y:p.y, r:p.r, type:p.type, tint:p.tint, vx:p.vx, vy:p.vy
+      }));
+      const fxArr = w.fx.map(e => {
+        if (e.type === 'shock') return { type:'shock', x:e.x, y:e.y, vx:e.vx, tint:e.tint, life:e.life };
+        if (e.type === 'bolt')  return { type:'bolt', x:e.x, yTop:e.yTop, yBot:e.yBot, tint:e.tint, life:e.life };
+        if (e.type === 'hit')   return { type:'hit', x:e.x, y:e.y, life:e.life, tint:e.tint };
+        if (e.type === 'spark') return { type:'spark', x:e.x, y:e.y, vx:e.vx, vy:e.vy, tint:e.tint, life:e.life };
+        return null;
+      }).filter(Boolean);
+      this.send({
+        t: 'snap',
+        fighters, projectiles, fx: fxArr,
+        round: w.round, score: w.score, timer: w.timer,
+        state: w.state, announce: w.announce, announceTime: w.announceTime,
+        shake: w.shake
+      });
+    },
+    handle(data) {
+      if (!data || !data.t) return;
+      if (data.t === 'pick') {
+        this.peerPick = data.pick;
+        tryStartOnlineBattle();
+      } else if (data.t === 'input') {
+        Object.assign(this.peerKeys, data.k || {});
+      } else if (data.t === 'snap') {
+        applySnapshot(data);
+      } else if (data.t === 'scene') {
+        if (data.scene === 'result') {
+          resultText = data.resultText; resultColor = data.resultColor;
+          scene = 'result';
+          touchEl.classList.add('hidden');
+        }
+      } else if (data.t === 'rematch') {
+        this.localPick = -1; this.peerPick = -1;
+        scene = 'select';
+        touchEl.classList.add('hidden');
+        topbar.classList.add('hidden');
+      } else if (data.t === 'hello') {
+        setLobbyStatus('Tersambung. Memilih petarung…');
+      }
+    }
+  };
+
+  function buildOnlineWorld(p1Id, p2Id) {
+    const p1 = FIGHTERS[p1Id], p2 = FIGHTERS[p2Id];
+    return {
+      fighters: [ spawnFighter(p1, 0, 250, 1), spawnFighter(p2, 1, 700, -1) ],
+      projectiles: [], fx: [], timers: [],
+      round: 1, maxRounds: 3, score: [0,0],
+      shake: 0, timer: 60 * 99,
+      state: 'intro', stateTime: 90,
+      announce: 'GET READY', announceTime: 90,
+      ended: false
+    };
+  }
+
+  function tryStartOnlineBattle() {
+    if (net.localPick < 0 || net.peerPick < 0) {
+      if (net.localPick < 0) setLobbyStatus && setLobbyStatus('Pilih petarungmu…');
+      return;
+    }
+    let p1Id, p2Id;
+    if (net.role === 'host') { p1Id = net.localPick; p2Id = net.peerPick; }
+    else                     { p1Id = net.peerPick;  p2Id = net.localPick; }
+    world = buildOnlineWorld(p1Id, p2Id);
+    scene = 'battle';
+    touchEl.classList.remove('hidden');
+    topbar.classList.remove('hidden');
+    if (net.role === 'host') net.sendSnapshot();
+  }
+
+  function applySnapshot(snap) {
+    if (!snap || !snap.fighters || snap.fighters.length < 2) return;
+    if (!world || scene !== 'battle') {
+      const p1Idx = FIGHTERS.findIndex(f => f.id === snap.fighters[0].defId);
+      const p2Idx = FIGHTERS.findIndex(f => f.id === snap.fighters[1].defId);
+      if (p1Idx < 0 || p2Idx < 0) return;
+      world = buildOnlineWorld(p1Idx, p2Idx);
+      scene = 'battle';
+      touchEl.classList.remove('hidden');
+      topbar.classList.remove('hidden');
+    }
+    snap.fighters.forEach((sf, i) => {
+      const f = world.fighters[i];
+      if (!f) return;
+      f.x = sf.x; f.y = sf.y; f.vx = sf.vx; f.vy = sf.vy;
+      f.facing = sf.facing; f.state = sf.state; f.stateTime = sf.stateTime;
+      f.hp = sf.hp; f.energy = sf.energy;
+      f.stun = sf.stun; f.invuln = sf.invuln; f.blocking = sf.blocking;
+      f.counterActive = sf.counterActive; f.dead = sf.dead;
+      f.anim = sf.anim; f.onGround = sf.onGround;
+    });
+    world.projectiles = (snap.projectiles || []).map(p => ({
+      x:p.x, y:p.y, r:p.r||16, type:p.type, tint:p.tint, vx:p.vx||0, vy:p.vy||0,
+      life: 60, dmg: 0, owner: 0
+    }));
+    world.fx = (snap.fx || []).map(e => Object.assign({ life: e.life || 14, hit: new Set() }, e));
+    world.round = snap.round; world.score = snap.score; world.timer = snap.timer;
+    world.state = snap.state;
+    if (snap.announce !== undefined) world.announce = snap.announce;
+    if (snap.announceTime !== undefined) world.announceTime = snap.announceTime;
+    world.shake = snap.shake || 0;
+  }
+
+  // -----------------------------------------------------------
+  // LOBBY UI
+  // -----------------------------------------------------------
+  const lobbyEl = document.getElementById('lobby');
+  const lobbyStatus = document.getElementById('lobby-status');
+  const lobbyActions = document.getElementById('lobby-actions');
+  const panelHost = document.getElementById('panel-host');
+  const roomcodeEl = document.getElementById('roomcode');
+  const inputCode = document.getElementById('input-code');
+  const btnHost = document.getElementById('btn-host');
+  const btnJoin = document.getElementById('btn-join');
+  const btnCopy = document.getElementById('btn-copy');
+  const btnLobbyBack = document.getElementById('btn-lobby-back');
+  const titleButtons = document.getElementById('title-buttons');
+  const btnLocal = document.getElementById('btn-local');
+  const btnOnline = document.getElementById('btn-online');
+
+  function showLobby(show) { lobbyEl.classList.toggle('hidden', !show); }
+  function showTitleButtons(show) { titleButtons.classList.toggle('show', show); }
+  function setLobbyStatus(msg) { lobbyStatus.textContent = msg; }
+  function setHostPanel(show) { panelHost.classList.toggle('hidden', !show); lobbyActions.classList.toggle('hidden', show); }
+
+  function genRoomCode() {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for (let i = 0; i < 5; i++) s += chars[Math.floor(Math.random()*chars.length)];
+    return s;
+  }
+  function peerIdFromCode(code) { return 'geming-fighter-' + code.toUpperCase(); }
+
+  function startHost() {
+    if (typeof Peer === 'undefined') { setLobbyStatus('PeerJS gagal dimuat. Cek koneksi internet.'); return; }
+    net.online = true; net.role = 'host';
+    const code = genRoomCode();
+    net.roomCode = code;
+    setLobbyStatus('Membuat ruang…');
+    net.peer = new Peer(peerIdFromCode(code), { debug: 1 });
+    net.peer.on('open', () => {
+      setHostPanel(true);
+      roomcodeEl.textContent = code;
+      setLobbyStatus('Menunggu teman gabung…');
+    });
+    net.peer.on('connection', conn => {
+      net.conn = conn;
+      conn.on('open', () => {
+        net.send({ t: 'hello', role: 'host' });
+        setLobbyStatus('Tamu masuk! Memilih petarung…');
+        showLobby(false);
+        scene = 'select';
+        showTitleButtons(false);
+      });
+      conn.on('data', d => net.handle(d));
+      conn.on('close', () => onPeerDisconnect());
+      conn.on('error', () => onPeerDisconnect());
+    });
+    net.peer.on('error', err => {
+      const t = err && err.type;
+      if (t === 'unavailable-id') {
+        setLobbyStatus('Kode bentrok, coba lagi.');
+        try { net.peer.destroy(); } catch(e){}
+        net.leave();
+      } else {
+        setLobbyStatus('Gagal: ' + (t || 'jaringan'));
+      }
+    });
+  }
+
+  function startJoin(code) {
+    code = (code || '').trim().toUpperCase();
+    if (code.length < 4) { setLobbyStatus('Masukkan kode ruang yang valid.'); return; }
+    if (typeof Peer === 'undefined') { setLobbyStatus('PeerJS gagal dimuat.'); return; }
+    net.online = true; net.role = 'client';
+    setLobbyStatus('Menyambungkan…');
+    net.peer = new Peer({ debug: 1 });
+    net.peer.on('open', () => {
+      const conn = net.peer.connect(peerIdFromCode(code), { reliable: true });
+      net.conn = conn;
+      conn.on('open', () => {
+        setLobbyStatus('Tersambung! Memilih petarung…');
+        net.send({ t: 'hello', role: 'client' });
+        showLobby(false);
+        scene = 'select';
+        showTitleButtons(false);
+      });
+      conn.on('data', d => net.handle(d));
+      conn.on('close', () => onPeerDisconnect());
+      conn.on('error', () => onPeerDisconnect());
+      // timeout kalau host tidak ada
+      setTimeout(() => {
+        if (net.conn && !net.conn.open) {
+          setLobbyStatus('Tidak dapat menyambung. Cek kode atau koneksi.');
+        }
+      }, 10000);
+    });
+    net.peer.on('error', err => {
+      const t = err && err.type;
+      if (t === 'peer-unavailable') setLobbyStatus('Kode tidak ditemukan / ruang sudah tutup.');
+      else setLobbyStatus('Gagal sambung: ' + (t || 'jaringan'));
+    });
+  }
+
+  function onPeerDisconnect() {
+    if (!net.online) return;
+    const wasInBattle = (scene === 'battle' || scene === 'result' || scene === 'select');
+    net.leave();
+    if (wasInBattle) {
+      scene = 'title';
+      showTitleButtons(true);
+      showLobby(false);
+      touchEl.classList.add('hidden');
+      topbar.classList.add('hidden');
+      // tampilkan pesan singkat di hint
+      const hint = document.getElementById('hint');
+      if (hint) { hint.textContent = 'Koneksi terputus.'; setTimeout(() => hint.textContent='Geser & ketuk tombol untuk bertarung', 2500); }
+    }
+  }
+
+  // event listeners
+  btnLocal.addEventListener('click', () => { showTitleButtons(false); scene = 'select'; });
+  btnOnline.addEventListener('click', () => {
+    setLobbyStatus('Buat ruang baru atau gabung pakai kode');
+    setHostPanel(false);
+    inputCode.value = '';
+    showLobby(true);
+  });
+  btnHost.addEventListener('click', startHost);
+  btnJoin.addEventListener('click', () => startJoin(inputCode.value));
+  inputCode.addEventListener('keydown', e => { if (e.key === 'Enter') startJoin(inputCode.value); });
+  btnCopy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(net.roomCode || '');
+      btnCopy.textContent = 'Tersalin!';
+      setTimeout(() => { btnCopy.textContent = 'Salin Kode'; }, 1200);
+    } catch(e) { btnCopy.textContent = 'Tidak bisa menyalin'; }
+  });
+  btnLobbyBack.addEventListener('click', () => {
+    net.leave();
+    showLobby(false);
+    showTitleButtons(true);
+  });
+
+  // Tampilkan tombol mode saat di title
+  function updateTitleButtonsVisibility() {
+    if (scene === 'title') showTitleButtons(true); else showTitleButtons(false);
+  }
 
   // -----------------------------------------------------------
   // MAIN LOOP
   // -----------------------------------------------------------
   function loop() {
     frame++;
+    updateTitleButtonsVisibility();
     if (scene === 'title') {
       clear('#0a0a18'); drawTitle();
     } else if (scene === 'select') {

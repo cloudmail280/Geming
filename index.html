@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0a0a18" />
   <title>Geming Fighter</title>
   <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -29,6 +30,40 @@
     <!-- TOMBOL HUD ATAS -->
     <div id="topbar" class="hidden">
       <button id="btn-back" class="mini">‹ Menu</button>
+    </div>
+
+    <!-- TOMBOL TITLE (Local / Online) -->
+    <div id="title-buttons">
+      <div class="title-btn-row">
+        <button class="title-btn" id="btn-local">Lokal (vs CPU)</button>
+        <button class="title-btn online" id="btn-online">Main vs Teman</button>
+      </div>
+    </div>
+
+    <!-- LOBBY OVERLAY (online multiplayer) -->
+    <div id="lobby" class="hidden">
+      <div class="lobby-card">
+        <h2>Main vs Teman</h2>
+        <div class="lobby-status" id="lobby-status">Buat ruang baru atau gabung pakai kode</div>
+
+        <!-- pilihan host/join -->
+        <div class="lobby-actions" id="lobby-actions">
+          <button class="lobby-btn primary" id="btn-host">Buat Ruang</button>
+          <div class="lobby-or">— atau —</div>
+          <input id="input-code" placeholder="KODE RUANG" maxlength="8" autocomplete="off" autocapitalize="characters" />
+          <button class="lobby-btn" id="btn-join">Gabung</button>
+        </div>
+
+        <!-- panel kode ruang (host) -->
+        <div class="lobby-panel hidden" id="panel-host">
+          <div class="lobby-label">Kode Ruang</div>
+          <div class="roomcode" id="roomcode">------</div>
+          <button class="lobby-btn small" id="btn-copy">Salin Kode</button>
+          <div class="lobby-hint">Bagikan kode ke teman, lalu tunggu mereka gabung.</div>
+        </div>
+
+        <button class="lobby-btn ghost" id="btn-lobby-back">Kembali</button>
+      </div>
     </div>
 
     <!-- LOADING / FOOTER -->
